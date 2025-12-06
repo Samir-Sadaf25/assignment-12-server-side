@@ -42,6 +42,63 @@ async function run() {
     const successStoriesCollection = client.db("SoulFinderDB").collection("successStory")
     const premiumRequestsCollection = client.db("SoulFinderDB").collection("premiumRequest")
 
+    app.patch("/edit-bio-data", async (req, res) => {
+      const data = req.body;
+      const filter = { email: data?.email };
+
+      const existing = await bioCollections.findOne(filter);
+
+      if (existing) {
+        const { BiodataId, ...rest } = data;
+        const result = await bioCollections.updateOne(filter, { $set: rest });
+        return res.send(result);
+      }
+
+      const count = await bioCollections.estimatedDocumentCount();
+      const newBiodata = {
+        BiodataId: count + 1,
+        ...data,
+      };
+
+      const result = await bioCollections.insertOne(newBiodata);
+      res.send(result);
+    });
+    app.get("/all-bio", async (req, res) => {
+      const result = await bioCollections.find().toArray();
+      res.send(result);
+    });
+    app.get("/my-bio/:email", async (req, res) => {
+      const email = req.params.email;
+      const result = await bioCollections.findOne({ email: email });
+      res.send(result);
+    });
+    app.post("/add-users", async (req, res) => {
+      const userData = req.body;
+      userData.role = "normal";
+      userData.created_at = new Date().toISOString();
+      userData.last_loggedIn = new Date().toISOString();
+      const query = {
+        email: userData?.email,
+      };
+      const alreadyExists = await userCollections.findOne(query);
+
+      if (!!alreadyExists) {
+        const result = await userCollections.updateOne(query, {
+          $set: { last_loggedIn: new Date().toISOString() },
+        });
+        return res.send(result);
+      }
+
+      const result = await userCollections.insertOne(userData);
+      res.send(result);
+    });
+    app.get("/all-users", async (req, res) => {
+      const result = await userCollections.find().toArray();
+      res.send(result);
+    });
+
+
+
 
   } finally {
     // Ensures that the client will close when you finish/error
