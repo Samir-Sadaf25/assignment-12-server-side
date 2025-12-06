@@ -64,8 +64,38 @@ async function run() {
       res.send(result);
     });
     app.get("/all-bio", async (req, res) => {
-      const result = await bioCollections.find().toArray();
-      res.send(result);
+
+      const { type, division, minAge, maxAge, limit = 20, page = 1 } = req.query;
+
+      const filter = {};
+      if (type) filter.biodataType = type;
+      if (division) filter.permanentDivision = division;
+      if (minAge || maxAge) {
+        filter.age = {};
+        if (minAge) filter.age.$gte = parseInt(minAge);
+        if (maxAge) filter.age.$lte = parseInt(maxAge);
+      }
+
+      const queryLimit = parseInt(limit);
+      const skip = (parseInt(page) - 1) * queryLimit;
+
+      const totalCount = await bioCollections.countDocuments(filter);
+
+      const result = await bioCollections
+        .find(filter)
+        .skip(skip)
+        .limit(queryLimit)
+        .toArray();
+
+      const totalPages = Math.ceil(totalCount / queryLimit);
+
+      res.send({
+        data: result,
+        totalCount,
+        totalPages,
+        currentPage: parseInt(page),
+      });
+
     });
     app.get("/my-bio/:email", async (req, res) => {
       const email = req.params.email;
