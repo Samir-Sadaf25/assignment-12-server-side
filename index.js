@@ -580,55 +580,55 @@ async function run() {
             userUpdated: userUpdateResult.modifiedCount,
           });
         } else {
-         return res.status(404).send({
-        message: 'User not found or no changes made',
-      });
+          return res.status(404).send({
+            message: 'User not found or no changes made',
+          });
         }
-        } catch (error) {
-    console.error('Error updating premium role:', error);
-    return res.status(500).send({ message: 'Internal server error' });
-  }
-});
-
-      app.post('/success-stories', async (req, res) => {
-  const story = req.body;
-  console.log(story);
-  
-  try {
-    
-
-    const result = await successStoriesCollection.insertOne(story);
-
-    if (result.insertedId) {
-      res.send({ insertedId: result.insertedId });
-    } else {
-      res.status(500).send({ message: 'Failed to insert success story' });
-    }
-  } catch (error) {
-    console.error('Error inserting success story:', error);
-    res.status(500).send({ message: 'Internal Server Error' });
-  }
-});
-
-
-
-app.get('/count-all', async (req, res) => {
-  try {
-    const maleCount = await bioCollections.countDocuments({ biodataType: 'Male' });
-    const femaleCount = await bioCollections.countDocuments({ biodataType: 'Female' });
-    const marriedCount = await successStoriesCollection.estimatedDocumentCount();
-
-    res.send({
-      male: maleCount,
-      female: femaleCount,
-      married: marriedCount
+      } catch (error) {
+        console.error('Error updating premium role:', error);
+        return res.status(500).send({ message: 'Internal server error' });
+      }
     });
-} catch (error) {
-    
-    console.error('Error counting stats:', error);
-    res.status(500).send({ message: 'Internal server error' });
-  }
-});
+
+    app.post('/success-stories', async (req, res) => {
+      const story = req.body;
+      console.log(story);
+
+      try {
+
+
+        const result = await successStoriesCollection.insertOne(story);
+
+        if (result.insertedId) {
+          res.send({ insertedId: result.insertedId });
+        } else {
+          res.status(500).send({ message: 'Failed to insert success story' });
+        }
+      } catch (error) {
+        console.error('Error inserting success story:', error);
+        res.status(500).send({ message: 'Internal Server Error' });
+      }
+    });
+
+
+
+    app.get('/count-all', async (req, res) => {
+      try {
+        const maleCount = await bioCollections.countDocuments({ biodataType: 'Male' });
+        const femaleCount = await bioCollections.countDocuments({ biodataType: 'Female' });
+        const marriedCount = await successStoriesCollection.estimatedDocumentCount();
+
+        res.send({
+          male: maleCount,
+          female: femaleCount,
+          married: marriedCount
+        });
+      } catch (error) {
+
+        console.error('Error counting stats:', error);
+        res.status(500).send({ message: 'Internal server error' });
+      }
+    });
     app.delete('/contact-req/:email', async (req, res) => {
       const email = req?.params?.email
       const filter = { "biodata.email": email }
@@ -641,6 +641,16 @@ app.get('/count-all', async (req, res) => {
       const filter = { type: 'premium' };
       const result = await bioCollections.find(filter).limit(6).toArray();
       res.send(result);
+    });
+
+    app.get('/success-stories', async (req, res) => {
+      try {
+        const stories = await successStoriesCollection.find().toArray();
+        res.send(stories);
+      } catch (error) {
+        console.error("Failed to fetch success stories:", error);
+        res.status(500).send({ message: "Failed to fetch success stories." });
+      }
     });
 
   } finally {
