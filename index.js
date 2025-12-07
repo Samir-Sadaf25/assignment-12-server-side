@@ -70,60 +70,57 @@ const verifyAdmin = async (req, res, next) => {
 };
 
 async function run() {
+  const bioCollections = client.db("SoulFinderDB").collection("biodata");
+  const userCollections = client.db("SoulFinderDB").collection("users");
+  const favoriteCollection = client.db("SoulFinderDB").collection("favorite");
+  const contactRequestCollection = client.db("SoulFinderDB").collection("contactRequest")
+  const successStoriesCollection = client.db("SoulFinderDB").collection("successStory")
+  const premiumRequestsCollection = client.db("SoulFinderDB").collection("premiumRequest")
+  const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).send({ message: "Unauthorized Access" });
+    }
+
+    const token = authHeader.split(" ")[1];
+    if (!token) {
+      return res.status(401).send({ message: "Unauthorized Access" });
+    }
+
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(token);
+      req.decoded = decodedToken;
+      next();
+    } catch (err) {
+      return res.status(403).send({ message: "Forbidden Access" });
+    }
+  };
+  const verifyAdmin = async (req, res, next) => {
+    const email = req?.decoded?.email;
+    console.log(" verifyAdmin triggered");
+
+    if (!email) {
+      console.log(" No email found in token");
+      return res.status(401).send({ message: "Unauthorized - No email in token" });
+    }
+
+    console.log(" Email from token:", email);
+
+    const user = await userCollections.findOne({ email });
+    console.log(" User from DB:", user);
+
+    if (!user || user?.role !== 'admin') {
+      console.log(" Not an admin or user not found:", user?.role);
+      return res.status(403).send({ message: 'Admin only Actions!', role: user?.role });
+    }
+
+    console.log(" Admin verified");
+    next();
+  };
+
+
+
   try {
-    await client.connect();
-    console.log("Connected to MongoDB!");
-
-    // Collections
-    const db = client.db("SoulFinderDB");
-    const bioCollections = db.collection("biodata");
-    const userCollections = db.collection("users");
-    const favoriteCollection = db.collection("favorite");
-    const contactRequestCollection = db.collection("contactRequest");
-    const successStoriesCollection = db.collection("successStory");
-    const premiumRequestsCollection = db.collection("premiumRequest");
-
-    // ----------------------------------------------
-    // ROUTES
-    // ----------------------------------------------
-
-    app.get("/", (req, res) => {
-      res.send("Portal server is running");
-    });
-
-    // ----------------------------------------------
-    // GET ALL BIO (with filters + pagination)
-    // ----------------------------------------------
-    app.get("/all-bio", async (req, res) => {
-      const { type, division, minAge, maxAge, limit = 20, page = 1 } = req.query;
-
-      const filter = {};
-      if (type) filter.biodataType = type;
-      if (division) filter.permanentDivision = division;
-      if (minAge || maxAge) {
-        filter.age = {};
-        if (minAge) filter.age.$gte = parseInt(minAge);
-        if (maxAge) filter.age.$lte = parseInt(maxAge);
-      }
-
-      const queryLimit = parseInt(limit);
-      const skip = (parseInt(page) - 1) * queryLimit;
-
-      const totalCount = await bioCollections.countDocuments(filter);
-      const result = await bioCollections.find(filter).skip(skip).limit(queryLimit).toArray();
-      const totalPages = Math.ceil(totalCount / queryLimit);
-
-      res.send({
-        data: result,
-        totalCount,
-        totalPages,
-        currentPage: parseInt(page),
-      });
-    });
-
-    // ----------------------------------------------
-    // PATCH / EDIT BIO DATA
-    // ----------------------------------------------
     app.patch("/edit-bio-data", verifyToken, async (req, res) => {
       const data = req.body;
       const filter = { email: data?.email };
@@ -146,18 +143,56 @@ async function run() {
       const result = await bioCollections.insertOne(newBiodata);
       res.send(result);
     });
+    app.get("/all-bio", async (req, res) => {
+      const {
+        type,
+        division,
+        minAge,
+        maxAge,
+        limit = 20,
+        page = 1,
+      } = req.query;
 
-    // ----------------------------------------------
-    // ADD TO FAVORITE
-    // ----------------------------------------------
-    app.post("/favorite-bios/:email", async (req, res) => {
+      const filter = {};
+      if (type) filter.biodataType = type;
+      if (division) filter.permanentDivision = division;
+      if (minAge || maxAge) {
+        filter.age = {};
+        if (minAge) filter.age.$gte = parseInt(minAge);
+        if (maxAge) filter.age.$lte = parseInt(maxAge);
+      }
+
+      const queryLimit = parseInt(limit);
+      const skip = (parseInt(page) - 1) * queryLimit;
+
+      const totalCount = await bioCollections.countDocuments(filter);
+
+      const result = await bioCollections
+        .find(filter)
+        .skip(skip)
+        .limit(queryLimit)
+        .toArray();
+
+      const totalPages = Math.ceil(totalCount / queryLimit);
+
+      res.send({
+        data: result,
+        totalCount,
+        totalPages,
+        currentPage: parseInt(page),
+      });
+    });
+
+    app.post("/favorite-bios/:email", verifyToken, async (req, res) => {
       const setBy = req.params.email;
       const biodata = req.body;
+
 
       if (!setBy) return res.status(400).send({ message: "User email required" });
       if (!biodata?.BiodataId) return res.status(400).send({ message: "BiodataId required" });
 
       try {
+
         const updateResult = await favoriteCollection.updateOne(
           { BiodataId: biodata.BiodataId },
           { $addToSet: { setBy: setBy }, $setOnInsert: { ...biodata } },
@@ -165,74 +200,23 @@ async function run() {
         );
 
         if (updateResult.upsertedCount > 0) {
+
           return res.send({ message: "Added to favorites (new doc created)" });
         } else if (updateResult.modifiedCount > 0) {
+
           return res.send({ message: "Added to favorites (added to setBy)" });
+        } else {
+
+          return res.status(409).send({ message: "Already added to favorites." });
         }
-
-        return res.status(409).send({ message: "Already added to favorites." });
-
       } catch (error) {
         console.error("Error adding favorite:", error);
         res.status(500).send({ message: "Failed to add favorite" });
       }
     });
 
-    // ----------------------------------------------
-    // GET USER ROLE
-    // ----------------------------------------------
-    app.get("/user/role/:email", async (req, res) => {
-      const email = req.params.email;
-      const result = await userCollections.findOne({ email });
-      if (!result) return res.status(404).send({ message: "User Not Found." });
-      res.send({ role: result?.role });
-    });
 
-    // ----------------------------------------------
-    // MY BIO
-    // ----------------------------------------------
-    app.get("/my-bio/:email", verifyToken, async (req, res) => {
-      const email = req.params.email;
-      const result = await bioCollections.findOne({ email });
-      res.send(result);
-    });
-
-    // ----------------------------------------------
-    // ADD USER
-    // ----------------------------------------------
-    app.post("/add-users", async (req, res) => {
-      const userData = req.body;
-
-      userData.role = "normal";
-      userData.created_at = new Date().toISOString();
-      userData.last_loggedIn = new Date().toISOString();
-
-      const query = { email: userData?.email };
-      const alreadyExists = await userCollections.findOne(query);
-
-      if (alreadyExists) {
-        const result = await userCollections.updateOne(query, {
-          $set: { last_loggedIn: new Date().toISOString() },
-        });
-        return res.send(result);
-      }
-
-      const result = await userCollections.insertOne(userData);
-      res.send(result);
-    });
-
-    // ----------------------------------------------
-    // GET ALL USERS
-    // ----------------------------------------------
-    app.get("/all-users", async (req, res) => {
-      const result = await userCollections.find().toArray();
-      res.send(result);
-    });
-
-    // ----------------------------------------------
-    // GET FAVORITE BIO LIST
-    // ----------------------------------------------
-    app.get("/favorite-bios/:email", async (req, res) => {
+    app.get("/favorite-bios/:email", verifyToken, async (req, res) => {
       const email = req.params.email
       const filter = { setBy: email }
 
@@ -240,10 +224,6 @@ async function run() {
       const result = await favoriteCollection.find(filter).toArray();
       res.send(result)
     });
-
-    // ----------------------------------------------
-    // GET SINGLE BIODATA + FAVORITE STATUS
-    // ----------------------------------------------
     app.get("/get-bio/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const userEmail = req.query.email;
@@ -260,36 +240,35 @@ async function run() {
           BiodataId: biodata.BiodataId,
           setBy: { $in: [userEmail] },
         };
-
         const isFavorite = await favoriteCollection.findOne(favFilter);
+
         biodata.isFavorite = !!isFavorite;
 
         res.send(biodata);
-
       } catch (error) {
         console.error("Error fetching biodata:", error);
         res.status(500).send({ message: "Something went wrong" });
       }
     });
 
-    // ----------------------------------------------
-    // DELETE FAVORITE
-    // ----------------------------------------------
     app.delete("/favorite-bios/:id", verifyToken, async (req, res) => {
       const id = req.params.id;
       const userEmail = req.query.email;
+      console.log(id, userEmail);
 
       if (!userEmail) return res.status(400).send({ message: "User email required" });
 
       try {
+
         const updateResult = await favoriteCollection.updateOne(
-          { _id: new ObjectId(id) },
+          { _id: id },
           { $pull: { setBy: userEmail } }
         );
 
         if (updateResult.modifiedCount === 0) {
           return res.status(404).send({ message: "Favorite not found or user not in favorites" });
         }
+
 
         const favoriteDoc = await favoriteCollection.findOne({ _id: new ObjectId(id) });
 
@@ -299,56 +278,81 @@ async function run() {
         }
 
         res.send({ message: "User removed from favorites" });
-
       } catch (error) {
         console.error("Error removing favorite:", error);
         res.status(500).send({ message: "Failed to remove favorite" });
       }
     });
 
-    // ----------------------------------------------
-    // SIMILAR BIODATA
-    // ----------------------------------------------
     app.get("/similar-biodata/:type", async (req, res) => {
       const biodataType = req.params.type;
       const excludeId = req.query.exclude;
 
       try {
         const filter = {
-          biodataType,
+          biodataType: biodataType,
           _id: { $ne: new ObjectId(excludeId) },
         };
 
         const similar = await bioCollections.find(filter).limit(3).toArray();
-        res.send(similar);
 
+        res.send(similar);
       } catch (error) {
         console.error("Error fetching similar biodata:", error);
         res.status(500).send({ message: "Failed to fetch similar biodata" });
       }
     });
+    app.get("/user/role/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const result = await userCollections.findOne({ email });
+      if (!result) return res.status(404).send({ message: "User Not Found." });
+      res.send({ role: result?.role });
+    });
 
-    // ----------------------------------------------
-    // STRIPE PAYMENT INTENT
-    // ----------------------------------------------
-    app.post("/create-payment-intent", async (req, res) => {
-      const amount = req.body?.amount;
-      const fee = amount * 100;
+    app.get("/my-bio/:email", verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      const result = await bioCollections.findOne({ email: email });
+      res.send(result);
+    });
+    app.post("/add-users", verifyToken, async (req, res) => {
+      const userData = req.body;
+      userData.role = "normal";
+      userData.created_at = new Date().toISOString();
+      userData.last_loggedIn = new Date().toISOString();
+      const query = {
+        email: userData?.email,
+      };
+      const alreadyExists = await userCollections.findOne(query);
+
+      if (!!alreadyExists) {
+        const result = await userCollections.updateOne(query, {
+          $set: { last_loggedIn: new Date().toISOString() },
+        });
+        return res.send(result);
+      }
+
+      const result = await userCollections.insertOne(userData);
+      res.send(result);
+    });
+    app.get("/all-users", async (req, res) => {
+      const result = await userCollections.find().toArray();
+      res.send(result);
+    });
+    app.post('/create-payment-intent', verifyToken, async (req, res) => {
+      const data = req.body;
+      const fee = data?.amount * 100
 
       const { client_secret } = await stripe.paymentIntents.create({
         amount: fee,
-        currency: "usd",
-        automatic_payment_methods: { enabled: true },
-      });
-
-      res.send({ clientSecret: client_secret });
-    });
-
-    // ----------------------------------------------
-    // CONTACT REQUEST
-    // ----------------------------------------------
-    app.post("/contact-req", async (req, res) => {
-
+        currency: 'usd',
+        automatic_payment_methods: {
+          enabled: true,
+        },
+      })
+      res.send({ clientSecret: client_secret })
+    })
+    app.post('/contact-req', verifyToken, async (req, res) => {
       const { transactionId, name, biodataId, email, nowStatus, biodata, fee } = req.body;
 
       try {
@@ -376,6 +380,7 @@ async function run() {
         res.status(500).send({ message: 'Server error', error });
       }
     });
+
     app.get('/contact-req', verifyToken, verifyAdmin, async (req, res) => {
       try {
         const result = await contactRequestCollection.find().toArray();
@@ -386,7 +391,7 @@ async function run() {
       }
     });
 
-    app.get('/get-my-contact-req/:email', async (req, res) => {
+    app.get('/get-my-contact-req/:email', verifyToken, async (req, res) => {
       try {
         const email = req.params.email;
 
@@ -401,7 +406,7 @@ async function run() {
     });
     const { ObjectId } = require("mongodb");
 
-    app.patch('/approve-contact-request/:id', async (req, res) => {
+    app.patch('/approve-contact-request/:id', verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
 
@@ -423,6 +428,22 @@ async function run() {
         console.error("Error approving contact request:", error);
         res.status(500).send({ message: 'Internal server error' });
       }
+    });
+
+
+
+    app.delete('/contact-req/:email', verifyToken, async (req, res) => {
+      const email = req?.params?.email
+      const filter = { "biodata.email": email }
+      const result = await contactRequestCollection.deleteOne(filter)
+      res.send(result)
+
+
+    })
+    app.get('/premium-bio', async (req, res) => {
+      const filter = { type: 'premium' };
+      const result = await bioCollections.find(filter).limit(6).toArray();
+      res.send(result);
     });
 
     app.get('/all-info', verifyToken, verifyAdmin, async (req, res) => {
@@ -471,13 +492,16 @@ async function run() {
       if (search) {
         query.name = { $regex: search, $options: "i" };
       }
+
+
       const users = await userCollections.find(query).toArray();
       res.send(users);
-
     });
 
     app.post('/premium-request', verifyToken, async (req, res) => {
       const { name, email, BiodataId, type } = req.body;
+
+
 
       try {
 
@@ -519,6 +543,7 @@ async function run() {
       const email = req.params.email;
       const { role } = req.body;
 
+
       if (!role) {
         return res.status(400).send({ message: 'Role is required' });
       }
@@ -546,6 +571,8 @@ async function run() {
 
       try {
 
+
+
         const requestUpdateResult = await premiumRequestsCollection.updateOne(
           { email },
           {
@@ -562,6 +589,7 @@ async function run() {
           { email },
           { $set: { type: 'premium' } }
         );
+
 
         const userUpdateResult = await userCollections.updateOne(
           { email },
@@ -590,7 +618,7 @@ async function run() {
       }
     });
 
-    app.post('/success-stories', async (req, res) => {
+    app.post('/success-stories', verifyToken, async (req, res) => {
       const story = req.body;
       console.log(story);
 
@@ -610,39 +638,6 @@ async function run() {
       }
     });
 
-
-
-    app.get('/count-all', async (req, res) => {
-      try {
-        const maleCount = await bioCollections.countDocuments({ biodataType: 'Male' });
-        const femaleCount = await bioCollections.countDocuments({ biodataType: 'Female' });
-        const marriedCount = await successStoriesCollection.estimatedDocumentCount();
-
-        res.send({
-          male: maleCount,
-          female: femaleCount,
-          married: marriedCount
-        });
-      } catch (error) {
-
-        console.error('Error counting stats:', error);
-        res.status(500).send({ message: 'Internal server error' });
-      }
-    });
-    app.delete('/contact-req/:email', async (req, res) => {
-      const email = req?.params?.email
-      const filter = { "biodata.email": email }
-      const result = await contactRequestCollection.deleteOne(filter)
-      res.send(result)
-
-
-    })
-    app.get('/premium-bio', async (req, res) => {
-      const filter = { type: 'premium' };
-      const result = await bioCollections.find(filter).limit(6).toArray();
-      res.send(result);
-    });
-
     app.get('/success-stories', async (req, res) => {
       try {
         const stories = await successStoriesCollection.find().toArray();
@@ -653,8 +648,41 @@ async function run() {
       }
     });
 
+    app.get('/count-all', async (req, res) => {
+      try {
+        const maleCount = await bioCollections.countDocuments({ biodataType: 'Male' });
+        const femaleCount = await bioCollections.countDocuments({ biodataType: 'Female' });
+        const marriedCount = await successStoriesCollection.estimatedDocumentCount();
+        const bioCount = await bioCollections.estimatedDocumentCount();
+        console.log(bioCount);
+
+        res.send({
+          male: maleCount,
+          female: femaleCount,
+          married: marriedCount,
+          totalBiodata: bioCount
+        });
+      } catch (error) {
+        console.error('Error counting stats:', error);
+        res.status(500).send({ message: 'Internal server error' });
+      }
+    });
+
+
+
+
+
+
+
+    // Connect the client to the server	(optional starting in v4.7)
+    // await client.connect();
+    // Send a ping to confirm a successful connection
+    // await client.db("admin").command({ ping: 1 });
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
-    // optional: you may close the client if needed
+
   }
 }
 
