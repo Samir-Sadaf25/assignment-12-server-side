@@ -64,8 +64,14 @@ async function run() {
       res.send(result);
     });
     app.get("/all-bio", async (req, res) => {
-
-      const { type, division, minAge, maxAge, limit = 20, page = 1 } = req.query;
+      const {
+        type,
+        division,
+        minAge,
+        maxAge,
+        limit = 20,
+        page = 1,
+      } = req.query;
 
       const filter = {};
       if (type) filter.biodataType = type;
@@ -95,7 +101,12 @@ async function run() {
         totalPages,
         currentPage: parseInt(page),
       });
-
+    });
+    app.get("/all-bio/:id", async (req, res) => {
+      const id = req.params.id;
+      const filter = { _id: new ObjectId(id) };
+      const result = await bioCollections.findOne(filter);
+      res.send(result);
     });
     app.get("/my-bio/:email", async (req, res) => {
       const email = req.params.email;
@@ -126,7 +137,28 @@ async function run() {
       const result = await userCollections.find().toArray();
       res.send(result);
     });
+    app.post("/favorite-bios", async (req, res) => {
 
+      const { setBy, biodata } = req.body;
+
+      const favoriteData = { ...biodata, setBy };
+
+      const alreadyExists = await favoriteCollection.findOne({
+        biodataId: biodata.biodataId,
+        setBy: setBy,
+      });
+
+      if (alreadyExists) {
+        return res
+          .status(409)
+          .send({ message: "Already added to favorites." });
+      }
+
+      const result = await favoriteCollection.insertOne(favoriteData);
+      res.send(result);
+
+
+    });
 
 
 
