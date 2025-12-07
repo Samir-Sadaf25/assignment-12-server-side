@@ -29,6 +29,7 @@ const client = new MongoClient(uri, {
 });
 
 // Middleware for token verification
+const premiumRequestsCollection = client.db("SoulFinderDB").collection("premiumRequest")
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.status(401).send({ message: "Unauthorized Access" });
@@ -43,6 +44,29 @@ const verifyToken = async (req, res, next) => {
   } catch (err) {
     return res.status(403).send({ message: "Forbidden Access" });
   }
+};
+
+const verifyAdmin = async (req, res, next) => {
+  const email = req?.decoded?.email;
+  console.log(" verifyAdmin triggered");
+
+  if (!email) {
+    console.log(" No email found in token");
+    return res.status(401).send({ message: "Unauthorized - No email in token" });
+  }
+
+  console.log(" Email from token:", email);
+
+  const user = await userCollections.findOne({ email });
+  console.log(" User from DB:", user);
+
+  if (!user || user?.role !== 'admin') {
+    console.log(" Not an admin or user not found:", user?.role);
+    return res.status(403).send({ message: 'Admin only Actions!', role: user?.role });
+  }
+
+  console.log(" Admin verified");
+  next();
 };
 
 async function run() {
@@ -115,6 +139,7 @@ async function run() {
       const count = await bioCollections.estimatedDocumentCount();
       const newBiodata = {
         BiodataId: count + 1,
+        type: 'normal',
         ...data,
       };
 
@@ -324,7 +349,7 @@ async function run() {
     // ----------------------------------------------
     app.post("/contact-req", async (req, res) => {
 
-      const { transactionId, name, biodataId, email, nowStatus, biodata } = req.body;
+      const { transactionId, name, biodataId, email, nowStatus, biodata, fee } = req.body;
 
       try {
         // Check for existing request with same biodataId and email
@@ -342,6 +367,7 @@ async function run() {
           email,
           nowStatus,
           biodata,
+          fee,
           requestedAt: new Date(),
         });
 
@@ -358,6 +384,159 @@ async function run() {
       res.send(result)
 
     })
+
+    app.get('/all-info', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+
+        const maleCount = await bioCollections.countDocuments({ biodataType: 'Male' });
+        const femaleCount = await bioCollections.countDocuments({ biodataType: 'Female' });
+
+
+        const premiumCount = await userCollections.countDocuments({ role: 'premium' });
+
+
+        const totalBiodata = await bioCollections.estimatedDocumentCount(); // faster than countDocuments({})
+
+
+        const revenueResult = await contactRequestCollection.aggregate([
+          {
+            $group: {
+              _id: null,
+              totalRevenue: { $sum: "$fee" }
+            }
+          }
+        ]).toArray();
+
+        const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+
+        res.send({
+          maleCount,
+          femaleCount,
+          premiumCount,
+          totalBiodata,
+          totalRevenue,
+        });
+
+      } catch (error) {
+        console.error(" Error in /all-info:", error);
+        res.status(500).send({ message: "Server Error" });
+      }
+    });
+
+    app.get('/all-users', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const search = req.query.search || '';
+
+        const filter = search
+          ? {
+            $or: [
+              { name: { $regex: search, $options: 'i' } },
+              { email: { $regex: search, $options: 'i' } },
+            ],
+          }
+          : {};
+
+        const users = await userCollections.find(filter).toArray();
+
+        res.send(users);
+      } catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).send({ message: 'Server error' });
+      }
+    });
+
+    app.post('/premium-request/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+
+      try {
+
+        const existingRequest = await premiumRequestsCollection.findOne({ email });
+
+        if (existingRequest) {
+          return res.status(409).send({ message: 'You already sent request to become premium' });
+        }
+
+
+        const newRequest = {
+          email,
+          requestedAt: new Date(),
+          status: 'pending',
+        };
+
+        await premiumRequestsCollection.insertOne(newRequest);
+
+        res.status(201).send({ message: 'Premium request submitted successfully.' });
+      } catch (error) {
+        console.error('Error processing premium request:', error);
+        res.status(500).send({ message: 'Server error' });
+      }
+    });
+    app.get('/premium-request', verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const premiumRequests = await premiumRequestsCollection.find().toArray();
+        res.send(premiumRequests);
+      } catch (error) {
+        console.error("Error fetching premium requests:", error);
+        res.status(500).send({ message: "Server error" });
+      }
+    });
+
+    app.patch('/update-role/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const { role } = req.body;
+
+      if (!role) {
+        return res.status(400).send({ message: 'Role is required' });
+      }
+
+      try {
+        const filter = { email };
+        const updateDoc = {
+          $set: { role: role },
+        };
+
+        const result = await userCollections.updateOne(filter, updateDoc);
+
+        if (result.modifiedCount === 0) {
+          return res.status(404).send({ message: 'User not found or type unchanged' });
+        }
+
+        res.send({ message: `User type updated to ${role}` });
+      } catch (error) {
+        console.error('Error updating user type:', error);
+        res.status(500).send({ message: 'Server error' });
+      }
+    });
+    app.patch('/premium-role-update/:email', verifyToken, verifyAdmin, async (req, res) => {
+      const email = req.params.email;
+
+      try {
+
+        const premiumRequest = await premiumRequestsCollection.findOne({ email });
+
+        if (!premiumRequest) {
+          return res.status(404).send({ message: 'Premium request not found' });
+        }
+
+        await premiumRequestsCollection.deleteOne({ email });
+
+
+        const result = await bioCollections.updateOne(
+          { email },
+          { $set: { type: 'premium' } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ message: 'User promoted to premium and request removed' });
+        } else {
+          res.status(404).send({ message: 'User not found in bio data' });
+        }
+
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: 'Internal server error' });
+      }
+    });
 
     app.delete('/contact-req/:email', async (req, res) => {
       const email = req?.params?.email
