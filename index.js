@@ -10,7 +10,7 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-
+const { log } = require("console");
 // Firebase Admin setup
 const serviceAccount = require("./firebase-admin-key.json");
 admin.initializeApp({
@@ -207,9 +207,13 @@ async function run() {
     // ----------------------------------------------
     // GET FAVORITE BIO LIST
     // ----------------------------------------------
-    app.get("/favorite-bio", async (req, res) => {
-      const result = await favoriteCollection.find().toArray();
-      res.send(result);
+    app.get("/favorite-bios/:email", async (req, res) => {
+      const email = req.params.email
+      const filter = { setBy: email }
+
+
+      const result = await favoriteCollection.find(filter).toArray();
+      res.send(result)
     });
 
     // ----------------------------------------------
@@ -319,13 +323,53 @@ async function run() {
     // CONTACT REQUEST
     // ----------------------------------------------
     app.post("/contact-req", async (req, res) => {
-      const data = req.body;
-      const result = await contactRequestCollection.insertOne(data);
-      res.send(result);
+
+      const { transactionId, name, biodataId, email, nowStatus, biodata } = req.body;
+
+      try {
+        // Check for existing request with same biodataId and email
+        const existing = await contactRequestCollection.findOne({ biodataId, email });
+
+        if (existing) {
+          return res.status(400).send({ message: 'You have already requested contact for this biodata.' });
+        }
+
+        // Insert new request
+        const result = await contactRequestCollection.insertOne({
+          transactionId,
+          name,
+          biodataId,
+          email,
+          nowStatus,
+          biodata,
+          requestedAt: new Date(),
+        });
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: 'Server error', error });
+      }
     });
 
-    app.get("/contact-req", async (req, res) => {
-      const result = await contactRequestCollection.find().toArray();
+    app.get('/contact-req/:email', verifyToken, async (req, res) => {
+      const email = req.params.email;
+      const filter = { email: email }
+      const result = await contactRequestCollection.find(filter).toArray()
+      res.send(result)
+
+    })
+
+    app.delete('/contact-req/:email', async (req, res) => {
+      const email = req?.params?.email
+      const filter = { "biodata.email": email }
+      const result = await contactRequestCollection.deleteOne(filter)
+      res.send(result)
+
+
+    })
+    app.get('/premium-bio', async (req, res) => {
+      const filter = { biodataType: 'Female' };
+      const result = await bioCollections.find(filter).toArray();
       res.send(result);
     });
 
